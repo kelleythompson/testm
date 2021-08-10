@@ -2,9 +2,6 @@
 % StateTL
 % Matlab (preliminary) Colors of Water Transit Loss and Timing engine
 %
-% Major version changes starting June 2021
-% 
-
 
 cd C:\Projects\Ark\ColorsofWater\matlab
 clear all
@@ -14,56 +11,18 @@ basedir=cd;basedir=[basedir '\'];
 j349dir=basedir;
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% runoptions
-% - most of this will be put into text file to drive run
-
-%control options (on=1) fed through control file need to be in this list -
+%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Run control options (on=1) fed through control file need to be in this list -
 %watch out - if change variable names in code also need to change them here!
 %currently - if leave out one of these from control file will assign it a zero value
 controlvars={'srmethod','infofilename','readinfofile','readevap','readstagedischarge','pullstationdata','pullreleaserecs','runriverloop','runwcloop','doexchanges','runcaptureloop','runcalibloop'};
-controlvars=[controlvars,{'logfilename','displaymessage','writemessage','outputfilename','outputgage','outputwc','outputcal','outputhr','outputday','calibavggainloss'}];
+controlvars=[controlvars,{'logfilename','displaymessage','writemessage','outputfilebase','outputgage','outputwc','outputcal','outputhr','outputday','calibavggainloss'}];
 controlfilename='StateTL_control.txt';
 
-% 
-% %Methods - these currently override method for all reaches, but planning default method by Reach that would run if not overrided  
-% %srmethod='j349';       %dynamic j349/Livinston method
-% srmethod='muskingum';   %percent loss TL plus muskingum-cunge for travel time
-% 
-% % Date - will be reworked - j349 currently only works for 60 days at 1hour - may alter fortran to run full calendar year at 1 hour without spinup
-% % also this needs to be integrated into SR structure
-% datestart=datenum(2018,4,01);
-% 
-% infofilename='StateTL_inputdata.xlsx';
-% readinfofile=0;  %1 reads from excel and saves mat file; other reads mat file;
-%     readevap=0;   %if reading info file, dont have to reread evap/SD (ie for calibration) 
-%     readstagedischarge=0;
-% pullstationdata=0;  %read gage and telemetry basd flow data; 1 reads from REST, other reads from file
-% pullreleaserecs=0;  %0 load from saved mat file, 1 if want to repull all from REST, 2 if only pull new/modified from REST for same period
-% runriverloop=1;  %1 runs / 0 etc not run
-% runwcloop=1;
-%    doexchanges=1;
-% runcaptureloop=1;  %loop to characterize potential capture vs available amt.
-% runcalibloop=1;
-% 
-% outputfilename='StateTL_inadv1new_';  %will add srmethod + gage/wc/etc + hour/day + .csv
-% outputgage=1;  %output river amounts by reach
-% outputwc=1;  %output waterclass amounts by reach
-% outputcal=1;  %output calibration amounts by gage location
-%     outputhr=0;  %output on hour timestep
-%     outputday=1;  %output on day timestep
-%     
-% WDcaliblist=[17];
-% calibstartdate=datenum(2018,4,02);
-% calibenddate=datenum(2018,4,15);
-% calibavggainloss='linreg'; %currently mean or linreg - method to establish gain/loss/error correction for period that might be like we will do future forecasting
-% calibavggainloss='mean';
-% logfilename='StateTL_runlog.txt';  %log filename
-% displaymessage=1;  %1=display messages to screen
-% writemessage=0; %1=write messages to logfile
 
-
-% initial 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% additional variable/run options
+% potentially some these might also be put into text file
 
 pred=0;  %if pred=0 subtracts water class from existing flows, if 1 adds to existing gage flows
 percrule=.10;  %percent rule - TLAP currently uses 10% of average release rate as trigger amount (Livingston 2011 says 10%; past Livingston 1978 detailed using 5% believe defined as 5% of max amount at headgate)
@@ -87,6 +46,10 @@ minj349=1;           %minimum flow for j349 application - TLAP uses 1.0
 gainchangelimit=0.1;
 
 apikey='D2D7AF63-C286-40A8-9';  %this is KT1 personal - will want to get one for this tool or cdss etc
+
+structureurl='https://dwr.state.co.us/Rest/GET/api/v2/structures/';
+telemetryhoururl='https://dwr.state.co.us/Rest/GET/api/v2/telemetrystations/telemetrytimeserieshour/';
+logwdidlocations=1;  %for log also document all wdid locations when pulled for evap
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -124,34 +87,35 @@ while 1
    else
        tids=[eids(1),cids,length(line)+1];
    end
-   controlvarsid=find(strcmp(lower(line(1:tids(1)-1)),controlvars));
+   controlvarsid=find(strcmpi(line(1:tids(1)-1),controlvars));
    logtxt='Control file: ';
    if 1==2
    elseif ~isempty(controlvarsid)   %variables listed in controlvarsid with single value as input; text should be in single quotes
        eval([controlvars{controlvarsid} '=' line(tids(1)+1:tids(2)-1) ';']);
-   elseif strcmp(lower(line(1:eids(1)-1)),'div')   %Division - currently only set to one at a time but with a bit of code revision could run multiple
+   elseif strcmpi(line(1:eids(1)-1),'div')   %Division - currently only set to one at a time but with a bit of code revision could run multiple
        d=str2double(line(tids(1)+1:tids(2)-1));
        ds=['D' num2str(d)];
        if length(tids)>2
             logmc=[logmc;'Warning: more than one Division listed in run options / currently not set to run multiple divisions at once (but very easily can be) - just running first listed Div'];
        end
-   elseif strcmp(lower(line(1:eids(1)-1)),'wdlist')   %WD run list in order; seperate by commas from upper tribs first to lower/mainstem
+   elseif strcmpi(line(1:eids(1)-1),'wdlist')   %WD run list in order; seperate by commas from upper tribs first to lower/mainstem
        WDlist=[];
        for i=1:length(tids)-1
             wd=str2double(line(tids(i)+1:tids(i+1)-1));
             WDlist=[WDlist,wd];
        end
-   elseif strcmp(lower(line(1:eids(1)-1)),'wdcaliblist')   %WD to calibrate if running calibloop, if multiple seperate by commas
+   elseif strcmpi(line(1:eids(1)-1),'wdcaliblist')   %WD to calibrate if running calibloop, if multiple seperate by commas
        WDcaliblist=[];
        for i=1:length(tids)-1
             wd=str2double(line(tids(i)+1:tids(i+1)-1));
             WDcaliblist=[WDcaliblist,wd];
        end
-   elseif strcmp(lower(line(1:eids(1)-1)),'datestart')   %calib startdate year,month,day
-       datestart=datenum(str2double(line(tids(1)+1:tids(2)-1)),str2double(line(tids(2)+1:tids(3)-1)),str2double(line(tids(3)+1:tids(4)-1)));
-   elseif strcmp(lower(line(1:eids(1)-1)),'calibstartdate')   %calib startdate year,month,day
+   elseif strcmpi(line(1:eids(1)-1),'datestart')   %calib startdate year,month,day
+       yearstart=str2double(line(tids(1)+1:tids(2)-1));
+       datestart=datenum(yearstart,str2double(line(tids(2)+1:tids(3)-1)),str2double(line(tids(3)+1:tids(4)-1)));
+   elseif strcmpi(line(1:eids(1)-1),'calibstartdate')   %calib startdate year,month,day
        calibstartdate=datenum(str2double(line(tids(1)+1:tids(2)-1)),str2double(line(tids(2)+1:tids(3)-1)),str2double(line(tids(3)+1:tids(4)-1)));
-   elseif strcmp(lower(line(1:eids(1)-1)),'calibenddate')   %calib enddate year,month,day
+   elseif strcmpi(line(1:eids(1)-1),'calibenddate')   %calib enddate year,month,day
        calibenddate=datenum(str2double(line(tids(1)+1:tids(2)-1)),str2double(line(tids(2)+1:tids(3)-1)),str2double(line(tids(3)+1:tids(4)-1)));
    else
        logtxt='WARNING: control file line not executed: ';
@@ -196,40 +160,6 @@ dateend=datestart+(rdays-spinupdays)-1;
 datedays=[datestart:dateend];
 
 
-
-% logm=['reading WD run list from file: ' basedir infofilename];
-% domessage(logm,logfilename,displaymessage,writemessage)
-% 
-% inforaw=readcell([basedir infofilename],'Sheet','WDlist');
-% [inforawrow inforawcol]=size(inforaw);
-% 
-% infoheaderrow=1;
-% for i=1:inforawcol
-%     if 1==2
-%     elseif strcmp(upper(inforaw{infoheaderrow,i}),'DIV'); infocol.div=i;
-%     elseif strcmp(upper(inforaw{infoheaderrow,i}),'WD'); infocol.wd=i;
-%     end
-% end
-% k=0;
-% for i=infoheaderrow+1:inforawrow
-%     if ~isempty(inforaw{i,infocol.div}) & ~ismissing(inforaw{i,infocol.div})
-%         k=k+1;
-%         v.di=inforaw{i,infocol.div};if ischar(v.di); v.di=str2num(v.di); end
-%         v.wd=inforaw{i,infocol.wd};if ischar(v.wd); v.wd=str2num(v.wd); end
-%         
-%         if k==1
-%            d=v.di;
-%            WDlist=v.wd;
-%         else
-%            if d~=v.di
-%                error('Stopping - more than one Division listed in run options / currently not set to run multiple divisions at once (but very easily can be)')
-%            end
-%            WDlist=[WDlist,v.wd];
-%         end
-%     end
-% end
-% ds=['D' num2str(d)];
-% 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 %READ SUBREACH INFORMATION
@@ -533,9 +463,6 @@ end
 
 %%%%%%%%%%%%%%%%%%%%%%%%
 % stage discharge data
-% [infonum,infotxt,inforaw]=xlsread([basedir infofilename],'stagedischarge');
-% [infonumrow infonumcol]=size(infonum);
-% [inforawrow inforawcol]=size(inforaw);
 
 if readstagedischarge==1
     SDmat=readmatrix([basedir infofilename],'Sheet','stagedischarge');
@@ -565,6 +492,235 @@ save([basedir 'StateTL_SRdataevapsd.mat'],'evap','stagedischarge');
 
 else
     load([basedir 'StateTL_SRdata.mat']);
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%5
+% Evaporation
+% NEW - using gridded statewide ET dataset
+% associating gridpoint with mean of us and dswdid locations for a subreach
+% basing evap as 1.05 * ETos
+% using HB REST to get utm and lat/lon coordinates
+
+
+%pullevap=1; %repull locations using HBrest and evap for full time periods, must do if adding/modifing locations or wdids
+%readevap=1; %repull locations using HBrest and evap for full time periods, must do if adding/modifing locations or wdids
+
+if readevap==1
+    if readinfofile~=1
+        load([basedir 'StateTL_SRdata.mat']);
+    end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Use HB REST to pull utm and lat/lon coordinates 
+logm=['for evaporation, reading wdid locations from HBRest'];
+domessage(logm,logfilename,displaymessage,writemessage)
+
+for wd=SR.(ds).WD
+    wds=['WD' num2str(wd)];
+    for r=SR.(ds).(wds).R 
+        rs=['R' num2str(r)];
+        for sr=SR.(ds).(wds).(rs).SR
+            uswdid=SR.(ds).(wds).(rs).wdid{sr};
+            dswdid=SR.(ds).(wds).(rs).dswdid{sr};
+            try
+                uswdiddata=webread(structureurl,'format','json','fields',[{'utmX'},{'utmY'},{'latdecdeg'},{'longdecdeg'}],'wdid',uswdid,'apiKey',apikey);
+                usutmx=uswdiddata.ResultList.utmX;
+                usutmy=uswdiddata.ResultList.utmY;
+                uslat=uswdiddata.ResultList.latdecdeg;
+                uslon=uswdiddata.ResultList.longdecdeg;
+            catch  %at a minimum will occur if fake wdid
+                usutmx=-999;
+                usutmy=-999;
+                uslat=-999;
+                uslon=-999;
+            end
+            try
+                dswdiddata=webread(structureurl,'format','json','fields',[{'utmX'},{'utmY'},{'latdecdeg'},{'longdecdeg'}],'wdid',dswdid,'apiKey',apikey);
+                dsutmx=dswdiddata.ResultList.utmX;
+                dsutmy=dswdiddata.ResultList.utmY;
+                dslat=dswdiddata.ResultList.latdecdeg;
+                dslon=dswdiddata.ResultList.longdecdeg;
+            catch  %at a minimum will occur if fake wdid
+                dsutmx=-999;
+                dsutmy=-999;
+                dslat=-999;
+                dslon=-999;
+            end
+            if isempty(usutmx)
+                usutmx=-999;
+                usutmy=-999;
+                uslat=-999;
+                uslon=-999;
+            end
+            if isempty(dsutmx)
+                dsutmx=-999;
+                dsutmy=-999;
+                dslat=-999;
+                dslon=-999;
+            end
+
+            
+            
+            if usutmx==-999 & dsutmx~=-999
+                utmx=dsutmx;
+                utmy=dsutmy;
+                lat=dslat;
+                lon=dslon;
+                logm=['WARNING: no or missing location for WDID:' uswdid ' WD:' wds ' rs:' rs ' sr:' num2str(sr)];
+                domessage(logm,logfilename,displaymessage,writemessage)
+            elseif usutmx~=-999 & dsutmx==-999
+                utmx=usutmx;
+                utmy=usutmy;
+                lat=uslat;
+                lon=uslon;
+                logm=['WARNING: no or missing location for WDID:' dswdid ' WD:' wds ' rs:' rs ' sr:' num2str(sr)];
+                domessage(logm,logfilename,displaymessage,writemessage)
+            elseif usutmx==-999 & dsutmx==-999
+                utmx=prevutmx;  %hopefully the first two are missing
+                utmy=prevutmy;
+                lat=prevlat;
+                lon=prevlon;
+                logm=['WARNING: no or missing location for BOTH WDIDs:' uswdid ' ' dswdid ' WD:' wds ' rs:' rs ' sr:' num2str(sr)];
+                domessage(logm,logfilename,displaymessage,writemessage)
+            else
+                utmx=(usutmx+dsutmx)/2;
+                utmy=(usutmy+dsutmy)/2;
+                lat=(uslat+dslat)/2;
+                lon=(uslon+dslon)/2;                
+            end
+
+            evap.(ds).(wds).(rs).utmx(sr)=utmx;
+            evap.(ds).(wds).(rs).utmy(sr)=utmy;
+            evap.(ds).(wds).(rs).lat(sr)=lat;
+            evap.(ds).(wds).(rs).lon(sr)=lon;
+            prevutmx=utmx;
+            prevutmy=utmy;
+            prevlat=lat;
+            prevlon=lon;
+            
+            % may want to remove these at some point as only needed for internal visualization
+            evap.(ds).(wds).(rs).usutmx(sr)=usutmx;
+            evap.(ds).(wds).(rs).usutmy(sr)=usutmy;
+            evap.(ds).(wds).(rs).uslat(sr)=uslat;
+            evap.(ds).(wds).(rs).uslon(sr)=uslon;
+            evap.(ds).(wds).(rs).dsutmx(sr)=dsutmx;
+            evap.(ds).(wds).(rs).dsutmy(sr)=dsutmy;
+            evap.(ds).(wds).(rs).dslat(sr)=dslat;
+            evap.(ds).(wds).(rs).dslon(sr)=dslon;
+
+            if logwdidlocations %may want to do this to check if good locations, but potentially turn it off when know its good
+                logm=['evap locations (utmx,utmy,lat,lon) from HBRest for subreach: ,' wds ',' rs ',' num2str(sr) ',' num2str(utmx) ',' num2str(utmy) ',' num2str(lat) ',' num2str(lon)];
+                domessage(logm,logfilename,displaymessage,writemessage)
+            end
+        end
+    end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Use gridded statewide ET dataset to build et for a full time period
+evapstartyear=2000;
+ETfilename='CAL_CO.mat';
+
+logm=['for evaporation, rebuilding full evaporation datasets starting from year: ' num2str(evapstartyear)];
+domessage(logm,logfilename,displaymessage,writemessage)
+
+
+logm=['loading statewide ET dataset binary file: ' ETfilename ];
+domessage(logm,logfilename,displaymessage,writemessage)
+%load([basedir ETfilename]);
+load(['C:\Projects\Ark\ArkDSS\PET\dataprocessed\' ETfilename])
+
+csid=find(CAL.dates==datenum(evapstartyear,1,1));  %do this here or from calling?
+evap.evapstartyear=evapstartyear;
+evap.yearend=CAL.yearend;
+evap.dates=CAL.dates(csid:end,1);
+evap.julien=CAL.julien(csid:end,1);
+
+yearid=find(CAL.yearid==csid);
+evap.years=CAL.years(yearid:end)';
+evap.yearid=CAL.yearid(yearid:end)-(csid-1);
+evap.yearid(1:end-1,2)=evap.yearid(2:end,1)-1;
+evap.yearid(end,2)=length(evap.dates);
+
+
+for i=1:365
+   julienids{i}=find(evap.julien==i); 
+end
+julienids{366}=julienids{365};
+evap.julienids=julienids;
+
+for wd=SR.(ds).WD
+    wds=['WD' num2str(wd)];
+    for r=SR.(ds).(wds).R 
+        rs=['R' num2str(r)];
+        for sr=SR.(ds).(wds).(rs).SR
+            utmx=evap.(ds).(wds).(rs).utmx(sr);
+            utmy=evap.(ds).(wds).(rs).utmy(sr);
+            lat=evap.(ds).(wds).(rs).lat(sr);
+            lon=evap.(ds).(wds).(rs).lon(sr);
+            [ETrs,ETos]=COASCEETr(utmx,utmy,lat,lon,CAL,gmratio);
+            evap.(ds).(wds).(rs).ETos(:,sr)=ETos(csid:end,:);
+        end
+        for i=1:366
+            evap.(ds).(wds).(rs).ETosavg(i,:)=mean(evap.(ds).(wds).(rs).ETos(julienids{i},:));
+            evap.(ds).(wds).(rs).ETosmin(i,:)=min(evap.(ds).(wds).(rs).ETos(julienids{i},:));
+            evap.(ds).(wds).(rs).ETosmax(i,:)=max(evap.(ds).(wds).(rs).ETos(julienids{i},:));
+        end
+    end
+end
+
+save([basedir 'StateTL_SRdataevapsd.mat'],'evap');
+
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%reattaching whole year in anticipation of potential calendar year
+
+if readevap==1 || readinfofile==1
+    if readevap~=1
+       load([basedir 'StateTL_SRdataevapsd.mat']);
+    end
+    
+    
+    convertevap=5280/(25.4*12*86400); %convert from mm/day to cfs / mile / ft
+    etostoevap=1.05;  %standard for lake evap but may want to go higher with factor...
+    yearids=[];
+    if yearstart<=evap.yearend
+        yearid=find(evap.years==yearstart);
+        yearids=evap.yearid(yearid,:);
+    end
+
+for wd=SR.(ds).WD
+    wds=['WD' num2str(wd)];
+    for r=SR.(ds).(wds).R 
+        rs=['R' num2str(r)];
+        if isempty(yearids)
+%            SR.(ds).(wds).(rs).evap=evap.(ds).(wds).(rs).ETosavg.*SR.(ds).(wds).(rs).evapfactor*etostoevap*convertevap;
+            SR.(ds).(wds).(rs).evap=evap.(ds).(wds).(rs).ETosavg*etostoevap*convertevap;
+%             SR.(ds).(wds).(rs).evapmin=evap.(ds).(wds).(rs).ETosmin*etostoevap*convertevap;
+%             SR.(ds).(wds).(rs).evapmax=evap.(ds).(wds).(rs).ETosmax*etostoevap*convertevap;
+        else
+            SR.(ds).(wds).(rs).evap=evap.(ds).(wds).(rs).ETos(yearids(1):yearids(2),:).*SR.(ds).(wds).(rs).evapfactor*etostoevap*convertevap;
+        end
+        
+        % may want to remove these at some point as only needed for internal visualization
+        SR.(ds).(wds).(rs).utmx=evap.(ds).(wds).(rs).utmx;
+        SR.(ds).(wds).(rs).utmy=evap.(ds).(wds).(rs).utmy;
+        SR.(ds).(wds).(rs).lat=evap.(ds).(wds).(rs).lat;
+        SR.(ds).(wds).(rs).lon=evap.(ds).(wds).(rs).lon;
+        SR.(ds).(wds).(rs).usutmx=evap.(ds).(wds).(rs).usutmx;
+        SR.(ds).(wds).(rs).usutmy=evap.(ds).(wds).(rs).usutmy;
+        SR.(ds).(wds).(rs).uslat=evap.(ds).(wds).(rs).uslat;
+        SR.(ds).(wds).(rs).uslon=evap.(ds).(wds).(rs).uslon;
+        SR.(ds).(wds).(rs).dsutmx=evap.(ds).(wds).(rs).dsutmx;
+        SR.(ds).(wds).(rs).dsutmy=evap.(ds).(wds).(rs).dsutmy;
+        SR.(ds).(wds).(rs).dslat=evap.(ds).(wds).(rs).dslat;
+        SR.(ds).(wds).(rs).dslon=evap.(ds).(wds).(rs).dslon;
+    end
+end
+
+save([basedir 'StateTL_SRdata.mat'],'SR');
+    
 end
 
 
@@ -634,8 +790,7 @@ for wd=SR.(ds).WD
                     SR.(ds).(wds).(rs).Qnode(:,sr,1)=SR.(ds).(wds).(rs).(flow)(1,sr)*ones(rsteps,1);
                 else
                     station=SR.(ds).(wds).(rs).station{1,sr};
-                    parameter=SR.(ds).(wds).(rs).parameter{1,sr};
-                    telemetryhoururl='https://dwr.state.co.us/Rest/GET/api/v2/telemetrystations/telemetrytimeserieshour/';
+                    parameter=SR.(ds).(wds).(rs).parameter{1,sr};                  
                     try
                         gagedata=webread(telemetryhoururl,'format','json','abbrev',station,'parameter',parameter,'startDate',datestr(rdates(1),21),'endDate',datestr(rdates(end),21),'includeThirdParty','true','apiKey',apikey);
                         for i=1:gagedata.ResultCount
@@ -1074,7 +1229,7 @@ for sr=SR.(ds).(wds).(rs).SR
         
     Qavg=(max(Qus,minc)+max(Qds,minc))/2;
     width=10.^((log10(Qavg)*SR.(ds).(wds).(rs).widtha(sr))+SR.(ds).(wds).(rs).widthb(sr));
-    evap=SR.(ds).(wds).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr); %EvapFactor = 0 to not have evap 
+    evap=SR.(ds).(wds).(rs).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr); %EvapFactor = 0 to not have evap 
     Qds=Qds-evap+SR.(ds).(wds).(rs).gagediffportion(:,sr)+SR.(ds).(wds).(rs).sraddamt(:,sr);
 %    Qds=Qds-evap+gagediff*SR.(ds).(wds).(rs).reachportion(sr);
     
@@ -1117,7 +1272,7 @@ for sr=SR.(ds).(wds).(rs).SR
     Qds=max(0,Qds);
     
 %    SR.(ds).(wds).(rs).gagediffportion(:,sr)=gagediff*SR.(ds).(wds).(rs).reachportion(sr);
-    SR.(ds).(wds).(rs).evap(:,sr)=evap;
+%    SR.(ds).(wds).(rs).evap(:,sr)=evap;
     SR.(ds).(wds).(rs).Qusnode(:,sr)=Qusnode;    
     SR.(ds).(wds).(rs).Qus(:,sr)=Qus;
     SR.(ds).(wds).(rs).Qds(:,sr)=Qds;
@@ -1166,7 +1321,7 @@ else
 %                 gagediffus=gagediffus-gagediffportion;
 %                 Qavg=(max(0,gagediffus)+max(0,gagediffds))/2;  %hopefully this doesn't smeer timing
 %                 width=10.^((log10(Qavg)*SR.(ds).(wds).(rs).widtha(sr))+SR.(ds).(wds).(rs).widthb(sr));
-%                 evap=SR.(ds).(wds).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr);
+%                 evap=SR.(ds).(wds).(rs).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr);
 %                 gagediffus=gagediffus+evap;
 %                 gagediffds=gagediffus;
 %             end
@@ -1578,7 +1733,7 @@ for sr=srtt:srtb
     Qdspartial=max(0,Qdspartial);
     Qavg=(max(Quspartial,minc)+max(Qdspartial,minc))/2;
     width=10.^((log10(Qavg)*SR.(ds).(wds).(rs).widtha(sr))+SR.(ds).(wds).(rs).widthb(sr));
-    evap=SR.(ds).(wds).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr);
+    evap=SR.(ds).(wds).(rs).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr);
     Qdspartial=Qdspartial-evap+SR.(ds).(wds).(rs).gagediffportion(:,sr)+SR.(ds).(wds).(rs).sraddamt(:,sr)+SR.(ds).(wds).(rs).sraddamtds(:,sr);
 %    if adjustlastsrtogage==1 && sr==srtb
     if adjustlastsrtogage==1 && sr==SR.(ds).(wds).(rs).SR(end)
@@ -1640,7 +1795,7 @@ for sr=srtt:srtb
         dsrelease=max(0,dsrelease);
         Qavg=(max(dsrelease,minc)+max(release,minc))/2;
         width=10.^((log10(Qavg)*SR.(ds).(wds).(rs).widtha(sr))+SR.(ds).(wds).(rs).widthb(sr));
-        evap=SR.(ds).(wds).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr);
+        evap=SR.(ds).(wds).(rs).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr);
         dsrelease=dsrelease-evap;
         dsrelease=max(0,dsrelease);
         SR.(ds).(wds).(rs).(ws).QSRadded(:,sr)=1;
@@ -1785,7 +1940,7 @@ if r~=Rb && negnativedssum>wcreduceamtlimit
                 end
                 Qavg=Qnegus;  %us and ds should be same amounts but using us to not smeer timing
                 width=10.^((log10(Qavg)*SR.(ds).(wds).(rs).widtha(sr))+SR.(ds).(wds).(rs).widthb(sr));
-                evap=SR.(ds).(wds).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr);
+                evap=SR.(ds).(wds).(rs).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr);
                 Qnegus=Qnegus+evap;
                 Qnegds=Qnegus;
             end
@@ -1874,346 +2029,6 @@ end %wd
 
 SR.(ds).Rivloc.flownative.us=SR.(ds).Rivloc.flowriv.us-SR.(ds).Rivloc.flowwc.us;
 SR.(ds).Rivloc.flownative.ds=SR.(ds).Rivloc.flowriv.ds-SR.(ds).Rivloc.flowwc.ds;
-
-
-if 1==2 %will cut this out
-% 
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% % ADMIN LOOP FOR WATERCLASSES
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% 
-% 
-% for wd=WDlist
-%     wds=['WD' num2str(wd)];
-%     if ~isfield(SR.(ds).(wds),'wwcnums')
-%         disp(['no water classes identified (admin loop not run) for D:' ds ' WD:' wds]) 
-%     else
-%     wwcnums=SR.(ds).(wds).wwcnums;
-%     Rt=SR.(ds).(wds).R(1);
-%     Rb=SR.(ds).(wds).R(end);
-%     disp(['running admin loop for D:' ds ' WD:' wds]) 
-% 
-% for w=1:length(wwcnums)
-% ws=wwcnums{w};
-% % if ~isfield(SR.(ds).WCloc,ws)  %if here will include missing WCs as empty
-% %     SR.(ds).WCloc.wslist=[SR.(ds).WCloc.wslist,{ws}];
-% %     SR.(ds).WCloc.(ws)=[];
-% % end
-% 
-% %disp(['running admin loop for D:' ds ' WD:' wds ' wc:' ws]) 
-% 
-% 
-% wdinwdidlist=find([SR.(ds).WDID{:,3}]==wd);
-% 
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% %   the next/first block is looking for water classes that were passed from another WDreach
-% %   these could have been passed from an upstream release or
-% %   from an exchange that was first routed down an upstream reach
-% 
-% parkwcid=0;
-% if isfield(SR.(ds).(wds),'park')
-%     parkwcid=find(strcmp(SR.(ds).(wds).park(:,1),ws));
-% end
-% if parkwcid~=0
-%     wdidfrom=SR.(ds).(wds).park{parkwcid,2};
-%     wdidfromid=SR.(ds).(wds).park{parkwcid,3};
-%     fromWDs=SR.(ds).(wds).park{parkwcid,4};
-% %    fromlsr=SR.(ds).(wds).park{parkwcid,8};
-% %    release=SR.(ds).(fromWD).(ws).Qdsrelease(:,fromlsr);
-%     fromRs=SR.(ds).(wds).park{parkwcid,5};
-%     fromsr=SR.(ds).(wds).park{parkwcid,6};
-%     release=SR.(ds).(fromWDs).(fromRs).(ws).Qdsrelease(:,fromsr);
-% else  %if not parked
-%     wdidfrom=WC.(ds).WC.(ws).wdid;
-%     wdidfromid=intersect(find(strcmp(SR.(ds).WDID(:,1),wdidfrom)),wdinwdidlist);
-%     release=WC.(ds).(wds).(ws).release;
-% end
-%     
-% wdidto=WC.(ds).WC.(ws).to;
-% wdidtoid=find(strcmp(SR.(ds).WDID(:,1),wdidto));
-% wdidtoidwd=intersect(wdidtoid,wdinwdidlist);
-% 
-% parkwdidid=0;
-% exchtype=0;
-% if isempty(wdidtoid)                                    %wdid To: listed in divrecs but cant find To:wdid in network list of wdids
-%     wdidtoid=wdidfromid;
-%     disp(['WARNING: not routing (either exchange or missing) To: ' wdidto ' Ty: ' num2str(WC.(ds).WC.(ws).type) ' for  ' ws(2:end) ' ' WC.(ds).WC.(ws).wc ' sum: ' num2str(sum(release)) ]);
-% else
-%     if ~isfield(SR.(ds).WCloc,ws)
-%         SR.(ds).WCloc.wslist=[SR.(ds).WCloc.wslist,{ws}];
-%         SR.(ds).WCloc.(ws)=[];
-%     end
-%     dswdidids=find(wdidtoid>=wdidfromid);
-%     if ~isempty(dswdidids)                              %DS RELEASE TO ROUTE (could include US Exchange that is first routed to end of WD)
-%         if SR.(ds).WDID{wdidtoid(dswdidids(1)),3} == wd %DS release located in same WD - so route to first node that is at or below release point
-%             wdidtoid=wdidtoid(dswdidids(1));            %if multiple points (could be multiple reach defs or same wdid at top of next ds reach)
-%         else                                            %DS release located in different WD - so route to bottom of WD and park into next WD
-%             wdidtoid=wdinwdidlist(end);
-%             parkwdidid=find(strcmp(SR.(ds).WDID(:,1),SR.(ds).WDID(wdidtoid,1)));
-%             parkwdidid=setdiff(parkwdidid,wdinwdidlist);
-%             parktype=1;  %1 push DS to end of reach
-%             disp(['routing: ' ws ' ' WC.(ds).WC.(ws).wc ' To:' wdidto ' external to WD reach, routing to end of WD reach']);
-%         end  
-%     elseif isempty(dswdidids)                             %US EXCHANGE RELEASE - ONLY ROUTING HERE IF FIRST DOWN TO MID-WD BRANCH
-%         wdidtoidnotwd=setdiff(wdidtoid,wdinwdidlist);
-%         branchid=find(SR.(ds).(wds).branch{:,1}==SR.D2.WDID{wdidtoidnotwd,3});
-% 
-%         if ~isempty(branchid)      %us exchange from DS branch within WD (exchtype=3)
-%             exchtype=3;
-%             SR.(ds).EXCH.(ws).wdidtoid=wdidtoid;
-%             SR.(ds).EXCH.(ws).WDto=SR.(ds).WDID{wdidtoid(1),3};
-%             wdidbranch=SR.(ds).(wds).branch{branchid,2};
-%             wdidtoids=find(strcmp(SR.(ds).WDID(:,1),wdidbranch));
-%             parkwdidid=setdiff(wdidtoids,wdinwdidlist);
-%             wdidtoid=intersect(wdidtoids,wdinwdidlist);
-%             parktype=2;  %2 push DS releases to internal node
-%             SR.(ds).EXCH.(ws).wdidfromid=parkwdidid;
-%             SR.(ds).EXCH.(ws).WDfrom=SR.(ds).WDID{parkwdidid,3};
-%             SR.(ds).EXCH.(ws).exchtype=3;            
-%             disp(['routing: ' ws ' ' WC.(ds).WC.(ws).wc ' To Confluence:' wdidbranch ' US exchange first routing with TL to internal confluence point within WD reach']);
-%             disp(['Exchange: (external to WD) To: ' wdidto ' Ty: ' num2str(WC.(ds).WC.(ws).type) ' for  ' ws(2:end) ' ' WC.(ds).WC.(ws).wc ' sum: ' num2str(sum(release)) ]);    
-%             
-%         elseif ~isempty(wdidtoidwd)                    %us exchange within WD (exchtype=1)
-%             exchtype=1;
-%             SR.(ds).EXCH.(ws).wdidtoid=wdidtoidwd(end);  %last in list in case multiple reach listing (will go to lowest) - remember that wdid is listed "above" subreach so sr will be next one after
-%             SR.(ds).EXCH.(ws).wdidfromid=wdidfromid;
-%             SR.(ds).EXCH.(ws).WDfrom=wd;
-%             SR.(ds).EXCH.(ws).WDto=wd;
-%             SR.(ds).EXCH.(ws).exchtype=1;
-%             wdidtoid=wdidfromid;  %leaving it there
-%             disp(['Exchange: (internal to WD) To: ' wdidto ' Ty: ' num2str(WC.(ds).WC.(ws).type) ' for  ' ws(2:end) ' ' WC.(ds).WC.(ws).wc ' sum: ' num2str(sum(release)) ]);
-%         else                                           %us exchange in different WD (exchtype=2)
-%             exchtype=2;
-%             SR.(ds).EXCH.(ws).wdidtoid=wdidtoid(end);
-%             SR.(ds).EXCH.(ws).wdidfromid=wdidfromid;
-%             SR.(ds).EXCH.(ws).WDfrom=wd;
-%             SR.(ds).EXCH.(ws).WDto=SR.(ds).WDID{wdidtoid(1),3};
-%             SR.(ds).EXCH.(ws).exchtype=2;
-%             wdidtoid=wdidfromid;
-% %            wdidtoid=wdinwdidlist(end);
-%             disp(['Exchange: (external to WD) To: ' wdidto ' Ty: ' num2str(WC.(ds).WC.(ws).type) ' for  ' ws(2:end) ' ' WC.(ds).WC.(ws).wc ' sum: ' num2str(sum(release)) ]);    
-%         end
-% 
-%     end       
-% end
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%     
-% % if WC.(ds).WC.(ws).type==1 %exchange (?)  %exchange defined by upstream record - not using anymore??
-% %     release=release*-1;
-% % end
-% srids=SR.(ds).(wds).(['R' num2str(Rb)]).subreachid(end);  %just to set size of release matrices
-% SR.(ds).(wds).(ws).Qusnoderelease(length(rdates),srids)=0;     %just used for plotting, maybe better way..
-% SR.(ds).(wds).(ws).Qusrelease(length(rdates),srids)=0;
-% SR.(ds).(wds).(ws).Qdsrelease(length(rdates),srids)=0;
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% 
-% if wdidtoid==wdidfromid   %EXCHANGES (or missing releases) - Exchanges put into Qds of US reach so consistent (not currently had been: missing gets parked in Qus)
-%     rs=['R' num2str(SR.(ds).WDID{wdidfromid,4})];
-%     sr=SR.(ds).WDID{wdidfromid,5};
-%     if exchtype==1 | exchtype==2  %for us exchanges putting into Qds of reach above node rather than Qus of reach below node
-%         wdsnew=wds;
-%         if SR.(ds).WDID{wdidfromid,6}==0 %uswdid/top of wd - push into us wd
-%             wdidnewid=setdiff(find(strcmp(SR.(ds).WDID(:,1),wdidfrom)),wdinwdidlist);
-%             wdsnew=['WD' num2str(SR.(ds).WDID{wdidnewid,3})];
-%             rs=['R' num2str(SR.(ds).WDID{wdidnewid,4})];
-%             sr=SR.(ds).WDID{wdidnewid,5};
-%             SR.(ds).EXCH.(ws).wdidfromid=wdidnewid;
-%             SR.(ds).EXCH.(ws).WDfrom=SR.(ds).WDID{wdidnewid,3};
-%         end 
-%         lsr=SR.(ds).(wdsnew).(rs).subreachid(sr);
-%         SR.(ds).(wdsnew).(rs).(ws).Qusnoderelease(:,sr)=zeros(length(rdates),1);
-%         SR.(ds).(wdsnew).(rs).(ws).Qusrelease(:,sr)=zeros(length(rdates),1);
-%         SR.(ds).(wdsnew).(rs).(ws).Qdsrelease(:,sr)=-1*release;
-%         SR.(ds).(wdsnew).(ws).Qusnoderelease(:,lsr)=zeros(length(rdates),1);
-%         SR.(ds).(wdsnew).(ws).Qusrelease(:,lsr)=zeros(length(rdates),1);
-%         SR.(ds).(wdsnew).(ws).Qdsrelease(:,lsr)=-1*release;
-% %        SR.(ds).WCloc.(ws)=[SR.(ds).WCloc.(ws);[{ds},{wdsnew},{rs},{sr},{lsr},{2}]];  %type=1release,2exchange - instead putting this in in exchange loop
-%         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%         %if want to do something with missing releases (ie put into Qusrelease) put an else here
-%         
-%     end
-% else
-%     
-% WDtr=SR.(ds).WDID{wdidfromid,3};
-% WDbr=SR.(ds).WDID{wdidtoid,3};
-% Rtr=SR.(ds).WDID{wdidfromid,4};
-% Rbr=SR.(ds).WDID{wdidtoid,4};
-% SRtr=SR.(ds).WDID{wdidfromid,5}+SR.(ds).WDID{wdidfromid,6};  %new ordering - if col6=1 then sr=dswdid / col6=0 then sr=uswdid, so for from sr add 0 or 1 to move to top of next sr
-% SRbr=SR.(ds).WDID{wdidtoid,5};
-% 
-% % if Rtr==0  %WATCH!! wdid listed is at bottom of reach - so for releases from starts at top of next reach, top reach 0 put into srid 1
-% %     Rtr=1;SRtr=1;
-% % elseif SRtr==SR.(ds).(wds).(['R' num2str(Rtr)]).SR(end)  %not sure if this condition would ever happen (wdid at bottom of Reach) currently no instances
-% %     Rtr=Rtr+1;SRt=1;
-% % else
-% %     SRtr=SRtr+1;
-% % end
-%         
-%     
-% 
-% %for wd=WDtr:WDbr  %remove as should now just be in one wd?
-% wd=WDtr;
-%     wds=['WD' num2str(wd)];
-%     for r=Rtr:Rbr
-%         rs=['R' num2str(r)];
-%         if r==Rtr
-%             srt=SRtr;
-%         else
-%             srt=1;
-%         end
-%         if r==Rbr
-%             srb=SRbr;
-%         else
-%             srb=SR.(ds).(wds).(rs).SR(end);
-%         end
-% 
-% for sr=srt:srb
-%     if and(sr==SRtr,r==Rtr)
-%         Qusnodepartial=SR.(ds).(wds).(rs).Qus(:,sr); %this makes Qusnoderelease=0
-%         if pred==1 %predictive case
-%             Quspartial=SR.(ds).(wds).(rs).Qus(:,sr)+release;
-%         else  %administrative case
-%             Quspartial=SR.(ds).(wds).(rs).Qus(:,sr)-release;
-%         end
-%     else
-%         type=SR.(ds).(wds).(rs).type(1,sr);
-%         Qnode=SR.(ds).(wds).(rs).Qnode(:,sr);
-%         Quspartial=Qusnodepartial+type*Qnode;
-%     end
-%     
-%     gain=SR.(ds).(wds).(rs).gain(end);
-% %     if gain<0;  %if losses, distribute to release also.. %this needs to be discussed further!!
-% %         
-% %         
-% %     end
-%     if pred==1
-%         celerity=-999;dispersion=-999;
-%     else
-%         celerity=SR.(ds).(wds).(rs).celerity(:,sr);
-%         dispersion=SR.(ds).(wds).(rs).dispersion(:,sr);
-%     end
-%         
-%     if gain==-999   %gain=-999 to not run J349 
-%         Quspartial=max(0,Quspartial);  %WARNING: this effectively cuts Qusrelease (waterclass) to Qus (gage); 
-%         Qdspartial=Quspartial;
-%         SR.(ds).(wds).(rs).QSRadd(:,sr)=zeros(length(rdates),1);
-%     else
-%         SR.(ds).(wds).(rs).QSRadd(:,sr)=-1*(min(1,Quspartial)-1);  %amount to add to SR - internal "potential" inadvertant diversion
-%         Quspartial=max(1,Quspartial);  %WARNING: this effectively cuts Qusrelease (waterclass) to Qus (gage); using one needed for for j349
-%         
-%         gainportion=gain*SR.(ds).(wds).(rs).reachportion(sr);
-%         if strcmp(srmethod,'j349')
-% %            [Qdspartial,celerity,dispersion]=runj349f(ds,wds,rs,sr,Quspartial,gainportion,rdays,rhours,rsteps,basedir,-999,-999); %celerity/disp based on gage-release (ie partial) flows
-%             [Qdspartial,celerity,dispersion]=runj349f(ds,wds,rs,sr,Quspartial,gainportion,rdays,rhours,rsteps,j349dir,celerity,dispersion); %celerity/disp based on gage flows
-%         elseif strcmp(srmethod,'muskingum')
-% %            [Qdspartial,celerity,dispersion]=runmuskingum(ds,wds,rs,sr,Quspartial,rhours,rsteps,-999,-999);
-%             [Qdspartial,celerity,dispersion]=runmuskingum(ds,wds,rs,sr,Quspartial,rhours,rsteps,celerity,dispersion);
-%         end
-%         Qdspartial=max(0,Qdspartial);
-%         
-%     end
-%     Qavg=(max(Quspartial,1)+max(Qdspartial,1))/2;
-%     width=10.^((log10(Qavg)*SR.(ds).(wds).(rs).widtha(sr))+SR.(ds).(wds).(rs).widthb(sr));
-%     if WC.(ds).WC.(ws).type==1 %exchange
-%         evap=0;
-%     else
-%         evap=SR.(ds).(wds).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr);
-%     end
-%     Qdspartial=Qdspartial-evap+SR.(ds).(wds).(rs).gagediff*SR.(ds).(wds).(rs).reachportion(sr);
-%     Qdspartial=max(0,Qdspartial);
-% 
-%     SR.(ds).(wds).(rs).(ws).Qusnodepartial(:,sr)=Qusnodepartial;
-%     SR.(ds).(wds).(rs).(ws).Quspartial(:,sr)=Quspartial;
-%     SR.(ds).(wds).(rs).(ws).Qdspartial(:,sr)=Qdspartial;
-%     
-%     %%%%%%%%%%%%%%%%%%%%%%%%%%
-%     % calc of actual WC amount
-%     if pred~=1  %if not prediction, wc amounts are gage amount - "partial" (gage-wcrelease) amount 
-%         Qusnoderelease=SR.(ds).(wds).(rs).Qusnode(:,sr)-Qusnodepartial;
-%         Qusrelease=SR.(ds).(wds).(rs).Qus(:,sr)-Quspartial;
-%         Qdsrelease=SR.(ds).(wds).(rs).Qds(:,sr)-Qdspartial;
-%     else        %if prediction, wc amounts are "partial" (gage+wcrelease) amount - gage amount 
-%         Qusnoderelease=Qusnodepartial-SR.(ds).(wds).(rs).Qusnode(:,sr);
-%         Qusrelease=Quspartial-SR.(ds).(wds).(rs).Qus(:,sr);
-%         Qdsrelease=Qdspartial-SR.(ds).(wds).(rs).Qds(:,sr);
-%     end
-%     
-%     Qusnoderelease=max(0,Qusnoderelease);
-%     Qusrelease=max(0,Qusrelease);  %this seems to happen in muskingham - reason?? - need to worry about lost negative amount??
-%     Qdsrelease=max(0,Qdsrelease);
-%     
-%     % wc listed within R at sr position
-%     SR.(ds).(wds).(rs).(ws).Qusnoderelease(:,sr)=Qusnoderelease;
-%     SR.(ds).(wds).(rs).(ws).Qusrelease(:,sr)=Qusrelease;
-%     SR.(ds).(wds).(rs).(ws).Qdsrelease(:,sr)=Qdsrelease;
-%     
-%     % wc listed within WD at subreachid position (only for movie plotting?)
-%     lsr=SR.(ds).(wds).(rs).subreachid(sr);
-%     SR.(ds).(wds).(ws).Qusnoderelease(:,lsr)=Qusnoderelease;
-%     SR.(ds).(wds).(ws).Qusrelease(:,lsr)=Qusrelease;
-%     SR.(ds).(wds).(ws).Qdsrelease(:,lsr)=Qdsrelease;
-% 
-%     % WCloc.ws listing locations of WC as cell/strings (sr/lsr/type(1-release/2-exch) is num)
-%     SR.(ds).WCloc.(ws)=[SR.(ds).WCloc.(ws);[{ds},{wds},{rs},{sr},{lsr},{1},{SR.(ds).(wds).(rs).wdid{sr}},{SR.(ds).(wds).(rs).dswdid{sr}}]];
-%     SR.(ds).Rivloc.flowwc.us(:,SR.(ds).(wds).(rs).locid(sr))=SR.(ds).Rivloc.flowwc.us(:,SR.(ds).(wds).(rs).locid(sr))+Qusrelease;
-%     SR.(ds).Rivloc.flowwc.ds(:,SR.(ds).(wds).(rs).locid(sr))=SR.(ds).Rivloc.flowwc.ds(:,SR.(ds).(wds).(rs).locid(sr))+Qdsrelease;
-%     %this has Rivloc column, wc-id, line within WCloc.ws to get SR nodes
-%     SR.(ds).Rivloc.flowwc.wcloc=[SR.(ds).Rivloc.flowwc.wcloc;{SR.(ds).(wds).(rs).locid(sr)} {ws} {length(SR.(ds).WCloc.(ws)(:,1))}];
-%     
-%     Qusnodepartial=Qdspartial;
-%     
-% end %sr
-% 
-%     end %r
-% %end %wd
-% end
-% 
-% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% % parking - transfering waterclass from one WD to another
-% %   for releases, ds WDreach should then pick up, for exchanges waits for exchange loop
-% if parkwdidid ~= 0  %placing park - place wcnum and park parameters in downstream WDreach 
-%     parkwdid=SR.(ds).WDID{parkwdidid,1};
-%     parkWD=SR.(ds).WDID{parkwdidid,3};
-%     pwds=['WD' num2str(parkWD)];
-%     parkR=SR.(ds).WDID{parkwdidid,4};
-%     prs=['R' num2str(parkR)];
-%     psr=SR.(ds).WDID{parkwdidid,5};
-%     
-%     lsr=SR.(ds).(wds).(rs).subreachid(sr);
-% %    parklsr=SR.(ds).(['WD' num2str(SR.(ds).WDID{wdidtoid,3})]).(['R' num2str(SR.(ds).WDID{wdidtoid,4})]).subreachid(SR.(ds).WDID{wdidtoid,5}); %this should also work - keep in case above breaks down
-% 
-%     if ~isfield(SR.(ds).(pwds),'wwcnums')
-%         SR.(ds).(pwds).wwcnums={ws};
-%     else
-%         SR.(ds).(pwds).wwcnums=[SR.(ds).(pwds).wwcnums;{ws}];
-%     end    
-%     if ~isfield(SR.(ds).(pwds),'park')
-%         SR.(ds).(pwds).park=[{ws},{parkwdid},{parkwdidid},{wds},{rs},{sr},{parktype},{lsr}];  %this is destination wdidid but source wds,rs,sr
-%     else
-%         SR.(ds).(pwds).park=[SR.(ds).(pwds).park;{ws},{parkwdid},{parkwdidid},{wds},{rs},{sr},{parktype},{lsr}];        
-%     end
-%     if parktype==2  %for us exchange through internal confluence, placing routed exchange amount at end of US WDreach - cant do this like this like regular us exchange since upper tribs already executed
-%         parklsr=SR.(ds).(pwds).(['R' num2str(SR.(ds).(pwds).R(end))]).subreachid(end);
-%         SR.(ds).(pwds).(prs).(ws).Qusnoderelease(:,psr)=zeros(length(rdates),1);
-%         SR.(ds).(pwds).(prs).(ws).Qusrelease(:,psr)=zeros(length(rdates),1);
-% %        SR.(ds).(pwds).(prs).(ws).Qdsrelease(:,psr)=SR.(ds).(wds).(ws).Qdsrelease(:,lsr);
-%         SR.(ds).(pwds).(prs).(ws).Qdsrelease(:,psr)=-1*SR.(ds).(wds).(rs).(ws).Qdsrelease(:,sr); %-1 for exchange - (or might this also be used for some sort of release?) 
-%         SR.(ds).(pwds).(ws).Qusnoderelease(:,parklsr)=zeros(length(rdates),1);
-%         SR.(ds).(pwds).(ws).Qusrelease(:,parklsr)=zeros(length(rdates),1);
-%         SR.(ds).(pwds).(ws).Qdsrelease(:,parklsr)=-1*SR.(ds).(wds).(ws).Qdsrelease(:,lsr);
-%     end
-%     
-%     
-% end
-% 
-% end %j - waterclass
-% end
-% end
-% 
-% SR.(ds).Rivloc.flownative.us=SR.(ds).Rivloc.flowriv.us-SR.(ds).Rivloc.flowwc.us;
-% SR.(ds).Rivloc.flownative.ds=SR.(ds).Rivloc.flowriv.ds-SR.(ds).Rivloc.flowwc.ds;
-% 
-end
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -2624,7 +2439,7 @@ for sr=SR.(ds).(wds).(rs).SR
         
     Qavg=(max(Qus,minc)+max(Qds,minc))/2;
     width=10.^((log10(Qavg)*SR.(ds).(wds).(rs).widtha(sr))+SR.(ds).(wds).(rs).widthb(sr));
-    evap=SR.(ds).(wds).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr); %EvapFactor = 0 to not have evap
+    evap=SR.(ds).(wds).(rs).evap(rjulien,1)*SR.(ds).(wds).(rs).evapfactor(sr).*width.*SR.(ds).(wds).(rs).channellength(sr); %EvapFactor = 0 to not have evap
     
     Qds=Qds-evap+gagediffportion(:,sr);
     if inadv3a_increaseint == 1
@@ -2664,26 +2479,26 @@ if outputgage==1
     titlelocline=[{'atWDID'},{'Div'},{'WD'},{'Reach'},{'SubReach'},{'1-USWDID/2-DSWDID'}];
     if outputhr==1
         titledates=cellstr(datestr(rdates(datestid:end),'mm/dd/yy HH:'));
-        writecell([titlelocline,titledates'],[outputfilename srmethod '_riverhr.csv']);
-        writecell([titlelocline,titledates'],[outputfilename srmethod '_nativehr.csv']);
-        writecell([titlelocline,titledates'],[outputfilename srmethod '_gagediffhr.csv']);
-        writecell([titlelocline,titledates'],[outputfilename srmethod '_sraddhr.csv']);
-        writecell([titlelocline,titledates'],[outputfilename srmethod '_totwcreducehr.csv']);
+        writecell([titlelocline,titledates'],[outputfilebase srmethod '_riverhr.csv']);
+        writecell([titlelocline,titledates'],[outputfilebase srmethod '_nativehr.csv']);
+        writecell([titlelocline,titledates'],[outputfilebase srmethod '_gagediffhr.csv']);
+        writecell([titlelocline,titledates'],[outputfilebase srmethod '_sraddhr.csv']);
+        writecell([titlelocline,titledates'],[outputfilebase srmethod '_totwcreducehr.csv']);
         if runcaptureloop==1
-        writecell([titlelocline,titledates'],[outputfilename srmethod '_nativecapturehr.csv']);
+        writecell([titlelocline,titledates'],[outputfilebase srmethod '_nativecapturehr.csv']);
         end
     end
     if outputday==1
         [yr,mh,dy,hr,mi,sec] = datevec(rdates(datestid:end));
         daymat=unique([yr,mh,dy],'rows','stable');
         titledatesday=cellstr(datestr([daymat zeros(size(daymat))],'mm/dd/yy'));
-        writecell([titlelocline,titledatesday'],[outputfilename srmethod '_riverday.csv']);
-        writecell([titlelocline,titledatesday'],[outputfilename srmethod '_nativeday.csv']);
-        writecell([titlelocline,titledatesday'],[outputfilename srmethod '_gagediffday.csv']);
-        writecell([titlelocline,titledatesday'],[outputfilename srmethod '_sraddday.csv']);
-        writecell([titlelocline,titledatesday'],[outputfilename srmethod '_totwcreduceday.csv']);
+        writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_riverday.csv']);
+        writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_nativeday.csv']);
+        writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_gagediffday.csv']);
+        writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_sraddday.csv']);
+        writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_totwcreduceday.csv']);
         if runcaptureloop==1
-        writecell([titlelocline,titledatesday'],[outputfilename srmethod '_nativecaptureday.csv']);
+        writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_nativecaptureday.csv']);
         end
     end
     for i=1:length(SR.(ds).Rivloc.loc(:,1))
@@ -2719,13 +2534,13 @@ if outputgage==1
     if outputhr==1
         logm=['writing hourly output files for river/native amounts (hourly is a bit slow)'];
         domessage(logm,logfilename,displaymessage,writemessage)
-        writecell([loclineriver,num2cell(outputlineriver)],[outputfilename srmethod '_riverhr.csv'],'WriteMode','append');
-        writecell([loclineriver,num2cell(outputlinenative)],[outputfilename srmethod '_nativehr.csv'],'WriteMode','append');
-        writecell([loclinereach,num2cell(outputlinegagediff)],[outputfilename srmethod '_gagediffhr.csv'],'WriteMode','append');
-        writecell([loclineriver,num2cell(outputlinesradd)],[outputfilename srmethod '_sraddhr.csv'],'WriteMode','append');
-        writecell([loclineriver,num2cell(outputlinetotwcreduce)],[outputfilename srmethod '_totwcreducehr.csv'],'WriteMode','append');
+        writecell([loclineriver,num2cell(outputlineriver)],[outputfilebase srmethod '_riverhr.csv'],'WriteMode','append');
+        writecell([loclineriver,num2cell(outputlinenative)],[outputfilebase srmethod '_nativehr.csv'],'WriteMode','append');
+        writecell([loclinereach,num2cell(outputlinegagediff)],[outputfilebase srmethod '_gagediffhr.csv'],'WriteMode','append');
+        writecell([loclineriver,num2cell(outputlinesradd)],[outputfilebase srmethod '_sraddhr.csv'],'WriteMode','append');
+        writecell([loclineriver,num2cell(outputlinetotwcreduce)],[outputfilebase srmethod '_totwcreducehr.csv'],'WriteMode','append');
         if runcaptureloop==1
-        writecell([loclineriver,num2cell(outputlinenativecapture)],[outputfilename srmethod '_nativecapturehr.csv'],'WriteMode','append');
+        writecell([loclineriver,num2cell(outputlinenativecapture)],[outputfilebase srmethod '_nativecapturehr.csv'],'WriteMode','append');
         end
     end
     if outputday==1
@@ -2742,13 +2557,13 @@ if outputgage==1
             outputlinedaynativecapture(:,i)=mean(outputlinenativecapture(:,dayids),2);
             end
         end
-        writecell([loclineriver,num2cell(outputlinedayriver)],[outputfilename srmethod '_riverday.csv'],'WriteMode','append');        
-        writecell([loclineriver,num2cell(outputlinedaynative)],[outputfilename srmethod '_nativeday.csv'],'WriteMode','append');
-        writecell([loclinereach,num2cell(outputlinedaygagediff)],[outputfilename srmethod '_gagediffday.csv'],'WriteMode','append');        
-        writecell([loclineriver,num2cell(outputlinedaysradd)],[outputfilename srmethod '_sraddday.csv'],'WriteMode','append');        
-        writecell([loclineriver,num2cell(outputlinedaytotwcreduce)],[outputfilename srmethod '_totwcreduceday.csv'],'WriteMode','append');        
+        writecell([loclineriver,num2cell(outputlinedayriver)],[outputfilebase srmethod '_riverday.csv'],'WriteMode','append');        
+        writecell([loclineriver,num2cell(outputlinedaynative)],[outputfilebase srmethod '_nativeday.csv'],'WriteMode','append');
+        writecell([loclinereach,num2cell(outputlinedaygagediff)],[outputfilebase srmethod '_gagediffday.csv'],'WriteMode','append');        
+        writecell([loclineriver,num2cell(outputlinedaysradd)],[outputfilebase srmethod '_sraddday.csv'],'WriteMode','append');        
+        writecell([loclineriver,num2cell(outputlinedaytotwcreduce)],[outputfilebase srmethod '_totwcreduceday.csv'],'WriteMode','append');        
         if runcaptureloop==1
-        writecell([loclineriver,num2cell(outputlinedaynativecapture)],[outputfilename srmethod '_nativecaptureday.csv'],'WriteMode','append');
+        writecell([loclineriver,num2cell(outputlinedaynativecapture)],[outputfilebase srmethod '_nativecaptureday.csv'],'WriteMode','append');
         end
     end
 end
@@ -2768,11 +2583,11 @@ if outputhr==1
     logm=['writing hourly output file by water class amounts (hourly is a bit slow)'];
     domessage(logm,logfilename,displaymessage,writemessage)
     titledates=cellstr(datestr(rdates(datestid:end),'mm/dd/yy HH:'));
-    writecell([titlelocline,titledates'],[outputfilename srmethod '_wchr.csv']);
-    writecell([titlelocline,titledates'],[outputfilename srmethod '_wcsraddhr.csv']);
-    writecell([titlelocline,titledates'],[outputfilename srmethod '_wcreducehr.csv']);
+    writecell([titlelocline,titledates'],[outputfilebase srmethod '_wchr.csv']);
+    writecell([titlelocline,titledates'],[outputfilebase srmethod '_wcsraddhr.csv']);
+    writecell([titlelocline,titledates'],[outputfilebase srmethod '_wcreducehr.csv']);
     if runcaptureloop==1
-    writecell([titlelocline,titledates'],[outputfilename srmethod '_wccapturehr.csv']);
+    writecell([titlelocline,titledates'],[outputfilebase srmethod '_wccapturehr.csv']);
     end
 end
 if outputday==1
@@ -2781,11 +2596,11 @@ if outputday==1
     [yr,mh,dy,hr,mi,sec] = datevec(rdates(datestid:end));
     daymat=unique([yr,mh,dy],'rows','stable');
     titledatesday=cellstr(datestr([daymat zeros(size(daymat))],'mm/dd/yy'));
-    writecell([titlelocline,titledatesday'],[outputfilename srmethod '_wcday.csv']);
-    writecell([titlelocline,titledatesday'],[outputfilename srmethod '_wcreduceday.csv']);
-    writecell([titlelocline,titledatesday'],[outputfilename srmethod '_wcsraddday.csv']);
+    writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_wcday.csv']);
+    writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_wcreduceday.csv']);
+    writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_wcsraddday.csv']);
     if runcaptureloop==1
-    writecell([titlelocline,titledatesday'],[outputfilename srmethod '_wccaptureday.csv']);
+    writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_wccaptureday.csv']);
     end
 end
 
@@ -2838,13 +2653,13 @@ for w=1:length(wwcnums)
     end 
     
     if outputhr==1
-        writecell([loclinewc,num2cell(outputlinewc)],[outputfilename srmethod '_wchr.csv'],'WriteMode','append');
-        writecell([loclinewc,num2cell(outputlinewcsradd)],[outputfilename srmethod '_wcsraddhr.csv'],'WriteMode','append');
+        writecell([loclinewc,num2cell(outputlinewc)],[outputfilebase srmethod '_wchr.csv'],'WriteMode','append');
+        writecell([loclinewc,num2cell(outputlinewcsradd)],[outputfilebase srmethod '_wcsraddhr.csv'],'WriteMode','append');
         if runcaptureloop==1
-        writecell([loclinewc,num2cell(outputlinewccapture)],[outputfilename srmethod '_wccapturehr.csv'],'WriteMode','append');
+        writecell([loclinewc,num2cell(outputlinewccapture)],[outputfilebase srmethod '_wccapturehr.csv'],'WriteMode','append');
         end
            if outwcreduce==1
-                writecell([loclinewcreduce,num2cell(outputlinewcreduce)],[outputfilename srmethod '_wcreducehr.csv'],'WriteMode','append');
+                writecell([loclinewcreduce,num2cell(outputlinewcreduce)],[outputfilebase srmethod '_wcreducehr.csv'],'WriteMode','append');
            end
     end
 
@@ -2860,13 +2675,13 @@ for w=1:length(wwcnums)
                 outputlinedaywcreduce(:,i)=mean(outputlinewcreduce(:,dayids),2);
            end
         end
-        writecell([loclinewc,num2cell(outputlinedaywc)],[outputfilename srmethod '_wcday.csv'],'WriteMode','append');        
-        writecell([loclinewc,num2cell(outputlinedaywcsradd)],[outputfilename srmethod '_wcsraddday.csv'],'WriteMode','append');
+        writecell([loclinewc,num2cell(outputlinedaywc)],[outputfilebase srmethod '_wcday.csv'],'WriteMode','append');        
+        writecell([loclinewc,num2cell(outputlinedaywcsradd)],[outputfilebase srmethod '_wcsraddday.csv'],'WriteMode','append');
         if runcaptureloop==1
-        writecell([loclinewc,num2cell(outputlinedaywccapture)],[outputfilename srmethod '_wccaptureday.csv'],'WriteMode','append');
+        writecell([loclinewc,num2cell(outputlinedaywccapture)],[outputfilebase srmethod '_wccaptureday.csv'],'WriteMode','append');
         end
         if outwcreduce==1
-            writecell([loclinewcreduce,num2cell(outputlinedaywcreduce)],[outputfilename srmethod '_wcreduceday.csv'],'WriteMode','append');             
+            writecell([loclinewcreduce,num2cell(outputlinedaywcreduce)],[outputfilebase srmethod '_wcreduceday.csv'],'WriteMode','append');             
         end
     end
 end
@@ -2882,13 +2697,13 @@ if outputcal==1 & runcalibloop==1
     titlelocline=[{'WDID'},{'Abbrev'},{'Div'},{'WD'},{'Reach'},{'SubReach'},{'1-Gage/2-Sim'}];
     if outputhr==1
         titledates=cellstr(datestr(rdates(datestid:end),'mm/dd/yy HH:'));
-        writecell([titlelocline,titledates'],[outputfilename srmethod '_calhr.csv']);
+        writecell([titlelocline,titledates'],[outputfilebase srmethod '_calhr.csv']);
     end
     if outputday==1
         [yr,mh,dy,hr,mi,sec] = datevec(rdates(datestid:end));
         daymat=unique([yr,mh,dy],'rows','stable');
         titledatesday=cellstr(datestr([daymat zeros(size(daymat))],'mm/dd/yy'));
-        writecell([titlelocline,titledatesday'],[outputfilename srmethod '_calday.csv']);
+        writecell([titlelocline,titledatesday'],[outputfilebase srmethod '_calday.csv']);
     end
     for wd=WDcaliblist
         wds=['WD' num2str(wd)];
@@ -2904,7 +2719,7 @@ if outputcal==1 & runcalibloop==1
     if outputhr==1
         logm=['writing hourly output files for gage and simulated (calibration) amounts (hourly is a bit slow)'];
         domessage(logm,logfilename,displaymessage,writemessage)
-        writecell([loclinegage,num2cell(outputlinegage)],[outputfilename srmethod '_calhr.csv'],'WriteMode','append');
+        writecell([loclinegage,num2cell(outputlinegage)],[outputfilebase srmethod '_calhr.csv'],'WriteMode','append');
     end
     if outputday==1
         logm=['writing daily output files for gage and simulated (calibration) amounts'];
@@ -2913,7 +2728,7 @@ if outputcal==1 & runcalibloop==1
             dayids=find(yr==daymat(i,1) & mh==daymat(i,2) & dy==daymat(i,3));
             outputlinedaygage(:,i)=mean(outputlinegage(:,dayids),2);
         end
-        writecell([loclinegage,num2cell(outputlinedaygage)],[outputfilename srmethod '_calday.csv'],'WriteMode','append');        
+        writecell([loclinegage,num2cell(outputlinedaygage)],[outputfilebase srmethod '_calday.csv'],'WriteMode','append');        
     end
 end
 
@@ -3227,8 +3042,278 @@ end
 end
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Function to calculate Rso (clear sky envelope) for ASCE Standardized Reference ET
+%
+% Equations from ASCE-EWRI (2005)
+% ASCE-EWRI. 2005. The ASCE Standardized Reference Evapotranspiration Equation. Edited by R.G. Allen; I.A. Walter; R.L. Elliott; calc.T.A. Howell; D. Itenfisu; M.E. Jensen; and R.L. Snyder. Environmental and Water Resources Institute of the American Society of Civil Engineers.
+% Complex Rso as recommended by Allen 2009 - uses vapor pressure
+
+function [Rso,Rsosimple,calc]=ASCErso(vaporpres,julien,latrad,elevm)
 
 
+calc.ea=vaporpres;                                                   %actual vapor pressure calced from datalogger based on hourly calc.T/RHs
+
+calc.dr=1+0.033*cos(2*pi/365*julien);                                %ASCE Eq 23 - inverse relative earth-sun distance factor (squared) (unitless)
+calc.solardec=0.409*sin(2*pi/365*julien-1.39);                       %ASCE Eq 24 - solar declination (radians)
+calc.sunsetangle=acos(-1*tan(latrad).*tan(calc.solardec));                %ASCE Eq 27 - sunset hour angle (radians)
+calc.Ra=24/pi*4.92*calc.dr.*(calc.sunsetangle.*sin(latrad).*sin(calc.solardec)+sin(calc.sunsetangle).*cos(latrad).*cos(calc.solardec));  %ASCE Eq 21 - extraterrestrial radiation (MJ/m/d)
+Rsosimple=(0.75+0.00002*elevm)*calc.Ra;                              %ASCE Eq 19 - simplified clear sky short wave radiation (MJ/m/d)
+
+calc.P=101.3*((293-0.0065*elevm)/293).^5.26;                         %ASCE Eq 3 - Atmospheric Pressure (kPa)
+calc.W=0.14*calc.ea*calc.P+2.1;                                                %ASCE Eq D.3 - Precipitable water in the atmosphere (mm)
+calc.sinB24=sin(0.85+0.3*latrad*sin(2*pi/365*julien-1.39)-0.42*(latrad).^2); %ASCE Eq D.5 - sin of angle of sun above the horizon during daylight period (radians)
+calc.Kt=1.0;                                                         %turbidity coefficient where 1.0 for clean air and <0.5 for extremely turbid, dusty, or polluted air
+calc.KB=0.98*exp(-0.00146*calc.P./(calc.Kt*calc.sinB24)-0.075*(calc.W./calc.sinB24).^(0.4));  %ASCE Eq D.2 - clearness index for direct beam radiation
+calc.KD=0.35-0.36*calc.KB;                                                %ASCE Eq D.4 - transmissivity index for diffuse radiation using equation for daily data
+Rso=(calc.KB+calc.KD).*calc.Ra;                                                %ASCE Eq D.1 - clear sky short wave radiation
+
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Function to calculate ASCE Standardized Reference ET
+%
+% Equations from ASCE-EWRI (2005)
+% ASCE-EWRI. 2005. The ASCE Standardized Reference Evapotranspiration Equation. Edited by R.G. Allen; I.A. Walter; R.L. Elliott; calc.T.A. Howell; D. Itenfisu; M.E. Jensen; and R.L. Snyder. Environmental and Water Resources Institute of the American Society of Civil Engineers.
+% Using complex Rso as recommended by Allen 2009
+
+function [ETrs,ETos,Tdew,Rso,Rsosimple,calc]=ASCEetr(tmax,tmin,vaporpres,solar,wind,julien,latrad,elevm,negETr,complexRso)
+
+calc.eoTmax= 0.6108*exp(17.27*tmax./(tmax+237.3));                   %ASCE Eq 7 - saturation vapor pressure (Tmax) (KPa)
+calc.eoTmin= 0.6108*exp(17.27*tmin./(tmin+237.3));                   %ASCE Eq 7 - saturation vapor pressure (Tmin) (KPa)
+calc.es=(calc.eoTmax+calc.eoTmin)/2;                                           %ASCE Eq 6 - saturation vapor pressure
+%calc.ea=(calc.eoTmin.*CMfull.(s).RH.max+calc.eoTmax.*CMfull.(s).RH.min)/2;    %ASCE Eq 11 - actual vapor pressure from relative humidity
+calc.ea=vaporpres;                                                   %actual vapor pressure calced from datalogger based on hourly calc.T/RHs
+Tdew=(116.91+237.3*log(calc.ea))./(16.78-log(calc.ea));                   %ASCE Eq D.7
+
+calc.dr=1+0.033*cos(2*pi/365*julien);                                %ASCE Eq 23 - inverse relative earth-sun distance factor (squared) (unitless)
+calc.solardec=0.409*sin(2*pi/365*julien-1.39);                       %ASCE Eq 24 - solar declination (radians)
+calc.sunsetangle=acos(-1*tan(latrad).*tan(calc.solardec));                %ASCE Eq 27 - sunset hour angle (radians)
+calc.Ra=24/pi*4.92*calc.dr.*(calc.sunsetangle.*sin(latrad).*sin(calc.solardec)+sin(calc.sunsetangle).*cos(latrad).*cos(calc.solardec));  %ASCE Eq 21 - extraterrestrial radiation (MJ/m/d)
+Rsosimple=(0.75+0.00002*elevm)*calc.Ra;                              %ASCE Eq 19 - simplified clear sky short wave radiation (MJ/m/d)
+
+calc.P=101.3*((293-0.0065*elevm)/293).^5.26;                         %ASCE Eq 3 - Atmospheric Pressure (kPa)
+calc.W=0.14*calc.ea*calc.P+2.1;                                                %ASCE Eq D.3 - Precipitable water in the atmosphere (mm)
+calc.sinB24=sin(0.85+0.3*latrad*sin(2*pi/365*julien-1.39)-0.42*(latrad).^2); %ASCE Eq D.5 - sin of angle of sun above the horizon during daylight period (radians)
+calc.Kt=1.0;                                                         %turbidity coefficient where 1.0 for clean air and <0.5 for extremely turbid, dusty, or polluted air
+calc.KB=0.98*exp(-0.00146*calc.P./(calc.Kt*calc.sinB24)-0.075*(calc.W./calc.sinB24).^(0.4));  %ASCE Eq D.2 - clearness index for direct beam radiation
+calc.KD=0.35-0.36*calc.KB;                                                %ASCE Eq D.4 - transmissivity index for diffuse radiation using equation for daily data
+Rso=(calc.KB+calc.KD).*calc.Ra;                                                %ASCE Eq D.1 - clear sky short wave radiation
+
+calc.T=(tmax+tmin)/2;                                                %ASCE Eq 2 - mean air temperature (Celsius)
+calc.psychro=0.000665*calc.P;                                             %ASCE Eq 4 - psychrometric constant (kPa/C)
+calc.slopesatvaptempcurve=2503*exp(17.27*calc.T./(calc.T+237.3))./((calc.T+237.3).^2); %ASCE Eq 5 - slope of the saturation vapor pressure-temperature curve
+
+calc.Rns=(1-0.23)*solar;                                             %ASCE Eq 16  - net short wave radiation
+if nargin>=10
+    if strcmp(complexRso,'n')
+        calc.fcd=1.35*solar./Rsosimple-0.35;                                %ASCE Eq 18 - cloudiness function using simple Rso
+    else
+        calc.fcd=1.35*solar./Rso-0.35;                                       %ASCE Eq 18 - cloudiness function using full Rso
+    end
+else
+    calc.fcd=1.35*solar./Rso-0.35;                                       %ASCE Eq 18 - cloudiness function using full Rso
+end
+%     calc.fcd=1.35*solar./Rso-0.35;                                       %ASCE Eq 18 - cloudiness function using full Rso
+
+lowfcdids=find(calc.fcd<0.05);
+calc.fcd(lowfcdids)=0.05*ones(size(lowfcdids));
+highfcdids=find(calc.fcd>1.0);
+calc.fcd(highfcdids)=1.0*ones(size(highfcdids));
+%calc.Rnl=4.901E-9*calc.fcd.*(0.34-0.14*(calc.ea.^(0.5))).*(((tmax+273.16)^.4.+(tmin+273.16)^.4)/2); %ASCE Eq 17 - net long wave radiation (using calc.ea from RH)
+calc.Rnl=4.901E-9*calc.fcd.*(0.34-0.14*(calc.ea.^(0.5))).*(((tmax+273.16).^4+(tmin+273.16).^4)/2); %ASCE Eq 17 - net long wave radiation (using calc.ea from Tdew)
+calc.Rn=calc.Rns-calc.Rnl;                                                     %ASCE Eq 15 - net radiation (MJ/m2/d)
+%u2=CMfull.(s).wind.run*1000/24/60/60; %wind speedat 2m in m/s - could need ASCE Eq 33 if not at 2m
+calc.CnETos=900;calc.CdETos=0.34;
+ETos=(0.408*calc.slopesatvaptempcurve.*(calc.Rn-0)+calc.psychro*(calc.CnETos./(calc.T+273)).*wind.*(calc.es-calc.ea)) ...
+    ./ (calc.slopesatvaptempcurve+calc.psychro*(1+calc.CdETos*wind));              %ASCE Eq 1 - standardized reference crop evapotranspiration for short surface (mm/d)
+calc.CnETrs=1600;calc.CdETrs=0.38;
+ETrs=(0.408*calc.slopesatvaptempcurve.*(calc.Rn-0)+calc.psychro*(calc.CnETrs./(calc.T+273)).*wind.*(calc.es-calc.ea)) ...
+    ./ (calc.slopesatvaptempcurve+calc.psychro*(1+calc.CdETrs*wind));              %ASCE Eq 1 - standardized reference crop evapotranspiration for tall surface (mm/d)
+
+%ETos=max(ETos,0); %sometimes goes negative particularly in deep winter - potential "dew" conditions causing - but shouldnt subtract from ETref at crop
+%ETrs=max(ETrs,0);
+
+if strcmp(negETr,'n')
+    calc.EToswithneg=ETos;
+    calc.ETrswithneg=ETrs;
+    nanids=isnan(ETrs);
+    ETos=max(ETos,0); %sometimes goes negative particularly in deep winter - potential "dew" conditions causing - but feel shouldnt subtract from ETref at crop
+    ETrs=max(ETrs,0);  %this removes nans
+    ETos(nanids)=nan;  %putting nans back in..
+    ETrs(nanids)=nan;
+end
+
+end
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Overall Function to find ASCE reference ET given gridpoint location
+%
 
+function [ETrs,ETos]=COASCEETr(utmx,utmy,lat,lon,CAL,gmratio)
+    lapserate=1.5;  %lapse rate from Strong et al (2017) and for average annual tmean in Division 2
+    TRexponent=1.5;
+    stationdistlimit=2.5; %distance in miles below which the closest station will be used straight up without gridded data
+    
+    if lon>0
+        lon=-1*lon;
+    end
+    lonids=find(gmratio.gmptslon<lon);
+    latids=find(gmratio.gmptslat<lat);
+    if lon==-999 || isempty(lonids) || isempty(latids) || length(lonids)==length(gmratio.gmptslon) || length(latids)==length(gmratio.gmptslat)
+        errormsg=['No grid location found for Lon: ' num2str(lon)  ' Lat: ' num2str(lat) ' Sorry have to stop!'];
+        errordlg(errormsg);
+        error(errormsg);
+    end
+    xids=[lonids(end) lonids(end)+1 lonids(end)+1 lonids(end)];
+    yids=[latids(1)-1 latids(1)-1 latids(1) latids(1)];
+    boxutmxpts=[gmratio.gmptsutmx(latids(1)-1,lonids(end)) gmratio.gmptsutmx(latids(1)-1,lonids(end)+1) gmratio.gmptsutmx(latids(1),lonids(end)+1) gmratio.gmptsutmx(latids(1),lonids(end))];
+    boxutmypts=[gmratio.gmptsutmy(latids(1)-1,lonids(end)) gmratio.gmptsutmy(latids(1)-1,lonids(end)+1) gmratio.gmptsutmy(latids(1),lonids(end)+1) gmratio.gmptsutmy(latids(1),lonids(end))];
+    for i=1:4
+        dist(i)=((utmx-boxutmxpts(i))^2+(utmy-boxutmypts(i))^2)^(1/2);
+    end
+    zerodist=find(dist==0);
+    if ~isempty(zerodist)
+        distp=zeros(1,4);
+        distp(zerodist,1)=1;
+    else
+        for i=1:4
+        distp(i)=(1/dist(i))/sum(1./dist);  %inverse distance percentage for 4 grid pts
+        end
+    end
+    ptelevm=gmratio.gmptselevm(yids(1),xids(1))*distp(1)+gmratio.gmptselevm(yids(2),xids(2))*distp(2)+gmratio.gmptselevm(yids(3),xids(3))*distp(3)+gmratio.gmptselevm(yids(4),xids(4))*distp(4);
+    ptelevft=ptelevm*3.28084;  %elevation ft
+    latrad=pi/180*lat;
+    
+    [mindist mindistid]=min(dist);gmxpt=xids(mindistid);gmypt=yids(mindistid);
+    
+    if isempty(gmxpt) | isempty(gmypt) %NEED TO INVESTIGATE HOW TO IDENTIFY THAT BAD COORDINATES
+        errormsg=['No grid location found for Lon: ' num2str(lon)  ' Lat: ' num2str(lat) ' Sorry have to stop!'];
+        errordlg(errormsg);
+        error(errormsg);
+    end
+    
+    closelist=gmratio.stations.closelist{gmxpt,gmypt};
+    p=gmratio.stations.p{gmxpt,gmypt};
+    dists=gmratio.stations.dists{gmxpt,gmypt};
+    coaglist=gmratio.stations.coaglist{gmxpt,gmypt};
+    pc=gmratio.stations.pc{gmxpt,gmypt};
+    cdists=gmratio.stations.cdists{gmxpt,gmypt};
+    noaalist=gmratio.stations.noaalist{gmxpt,gmypt};
+    pn=gmratio.stations.pn{gmxpt,gmypt};
+    ndists=gmratio.stations.ndists{gmxpt,gmypt};
+
+if dists(1)<=stationdistlimit
+    closedistids=find(dists<=stationdistlimit);
+    if length(closedistids)==1
+        closelist=closelist(1);
+        p=1;
+    else
+        closelist=closelist(closedistids);
+        clear p
+        for i=1:length(closedistids)
+            p(i)=(1/dists(i))/sum(1./dists(closedistids));
+        end
+    end
+    if length(closelist)==1 %single station options with no correction
+        s=closelist{1};
+        ETrs=CAL.(s).ETcal.ETrs;
+        ETos=CAL.(s).ETcal.ETos;
+        tmax=CAL.(s).ETcal.tmax;
+        tmin=CAL.(s).ETcal.tmin;
+        precip=CAL.(s).ETcal.precip;
+    else  %more than one close station
+        ETrs=0; ETos=0; tmax=0;tmin=0;precip=0;
+        for i=1:length(closelist)
+            s=closelist{i};
+            ETrs=ETrs+CAL.(s).ETcal.ETrs*p(i);
+            ETos=ETos+CAL.(s).ETcal.ETos*p(i);
+            tmax=tmax+CAL.(s).ETcal.tmax*p(i);
+            tmin=tmin+CAL.(s).ETcal.tmin*p(i);
+            precip=precip+CAL.(s).ETcal.precip*p(i);
+        end
+        tmax=max(tmax,tmin);
+    end
+else
+    gmrsodiffratio=squeeze(gmratio.gmrsodiffratio(gmxpt,gmypt,:));
+    gmwindratio=squeeze(gmratio.gmwindratio(gmxpt,gmypt,:));
+    gmprecipratio=squeeze(gmratio.gmprecipratio(gmxpt,gmypt,:));
+    
+    %%%%%%%%%%%%%%%%%%
+    %lapse rate based corrections
+    %
+    tmax=0;tmin=0;tdewk=0;
+    for i=1:length(closelist)
+        s=closelist{i};
+        tmin=tmin+(CAL.(s).ETcal.tmin+lapserate*(CAL.(s).loc.elev-ptelevft)/1000)*p(i);
+        tmax=tmax+(CAL.(s).ETcal.tmax+lapserate*(CAL.(s).loc.elev-ptelevft)/1000)*p(i);
+        tdewk=tdewk+(CAL.(s).ETcal.tmin-CAL.(s).ETcal.Tdew)*p(i);
+    end
+    tmax=max(tmin,tmax);
+    Tdew=tmin-tdewk; %ASCE Eq D.8
+    ea=0.6108*exp(17.27*Tdew./(Tdew+237.3));  %ASCE Eq 8 - vapor pressure from dew point temperature
+    [Rso,Rsosimple,calc]=ASCErso(ea,CAL.julien,latrad,ptelevm); %ASCE Eq D.1 - clear sky short wave radiation (function)
+    
+        
+    %%%%%%%%%%%%%%%%%%
+    % SOLAR
+    %
+        crsodiff=0;
+        for i=1:length(coaglist)
+            cs=coaglist{i};
+            crsodiff=crsodiff+(CAL.(cs).ETcal.Rso-CAL.(cs).ETcal.solar)*pc(i);
+        end
+        for i=1:12
+            monthids=CAL.monthidsall{i};
+            solar(monthids,1)=Rso(monthids,1)-crsodiff(monthids,1)*gmrsodiffratio(i);
+        end        
+    
+    %%%%%%%%%%
+    % WIND
+    %
+        mtstations=0;
+        for i=1:length(closelist)
+            c=closelist{i};
+            mtstations=mtstations+CAL.(c).loc.mts;
+        end
+        wind=0;
+        if mtstations>1
+            for i=1:length(coaglist)
+                cs=coaglist{i};
+                wind=wind+CAL.(cs).ETcal.wind*pc(i);
+            end
+        else
+            for i=1:length(coaglist)
+                cs=coaglist{i};
+                wind=wind+CAL.(cs).ETcal.wind*pc(i);
+            end
+            for i=1:12
+                monthids=CAL.monthidsall{i};
+                wind(monthids,1)=wind(monthids,1)*gmwindratio(i);
+            end
+        end
+        
+
+    %%%%%%%%%%
+    % PRECIP
+    
+        precip=0;
+        for i=1:length(noaalist)
+            ns=noaalist{1};
+            precip=precip+CAL.(ns).ETcal.precip*pn(i);
+        end
+        for i=1:12
+            monthids=CAL.monthidsall{i};
+            precip(monthids,1)=precip(monthids,1)*gmprecipratio(i);
+        end
+        
+        
+     %%%%%%%%%%%%%%
+     % ETrs
+     
+     [ETrs,ETos,Tdew,Rso,Rsosimple,calc]=ASCEetr(tmax,tmin,ea,solar,wind,CAL.julien,latrad,ptelevm,'n');
+     
+end
+
+end
